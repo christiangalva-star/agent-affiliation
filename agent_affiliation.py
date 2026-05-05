@@ -79,11 +79,16 @@ class AmazonScanner:
         self.session = requests.Session()
         self.session.headers.update(HEADERS)
 
-    def _fetch(self, url: str) -> Optional[object]:
+    def _fetch(self, url: str):
         try:
-            r = self.session.get(url, timeout=15)
-            r.raise_for_status()
-            return BeautifulSoup(r.text, "html.parser")
+            with sync_playwright() as p:
+                browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
+                page = browser.new_context().new_page()
+                page.goto(url, timeout=30000, wait_until="domcontentloaded")
+                time.sleep(random.uniform(2, 4))
+                html = page.content()
+                browser.close()
+            return BeautifulSoup(html, "html.parser")
         except Exception as e:
             logger.warning(f"Erreur fetch {url}: {e}")
             return None
