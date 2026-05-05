@@ -27,3 +27,4 @@ COPY agent_affiliation.py .
 # The agent runs as a one-shot job / cron
 
 CMD ["python", "agent_affiliation.py"]
+# rebuild mar.  5 mai 2026 18:51:56 CEST
