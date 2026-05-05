@@ -389,39 +389,46 @@ class EmailReporter:
 # ── ORCHESTRATEUR PRINCIPAL ────────────────────────────────────────────────────
 def main():
     logger.info("=== Agent Affiliation demarre ===")
-    scanner   = AmazonScanner()
+
+    # Produits hardcodés (fiables, déjà validés)
+    products = [
+        Product(
+            title="STC Chaussettes paillettes pipelette bleu",
+            url="https://amzn.to/4ddmLLI",
+            price=5.70,
+            rating=4.8,
+            reviews=145,
+            asin="B0DS6K72MD",
+            image_url="",
+            affiliate_url="https://amzn.to/4ddmLLI",
+            score=95.0
+        )
+    ]
+
     generator = ContentGenerator()
     publisher = TikTokPublisher(session_id=TIKTOK_SESSION_ID)
     reporter  = EmailReporter()
+    records   = []
 
-    products = scanner.scan()
-    if not products:
-        logger.warning("Aucun produit trouve - arret.")
-        return
-    logger.info(f"Top : {products[0].title} (score={products[0].score})")
-
-    records: List[VideoRecord] = []
     for product in products[:3]:
         content = generator.generate(product)
         logger.info(f"Hook genere : {content['hook']}")
         if TIKTOK_SESSION_ID:
             tiktok_url = publisher.publish(product, content)
         else:
-            tiktok_url = "https://www.tiktok.com/@votre_compte (session non configuree)"
-            logger.warning("TIKTOK_SESSION_ID manquant - publication simulee")
+            tiktok_url = "simulation"
+            logger.warning("TIKTOK_SESSION_ID manquant")
         records.append(VideoRecord(
             product_title=product.title,
-            tiktok_url=tiktok_url or "Erreur publication",
+            tiktok_url=tiktok_url or "erreur",
             published_at=datetime.now().strftime("%d/%m/%Y %H:%M"),
             score=product.score,
             price=product.price,
             rating=product.rating,
         ))
-        time.sleep(random.uniform(30, 60))
 
     reporter.send(records)
     logger.info("=== Agent termine ===")
-
 
 if __name__ == "__main__":
     main()
