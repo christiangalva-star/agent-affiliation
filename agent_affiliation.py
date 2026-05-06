@@ -366,24 +366,33 @@ class EmailReporter:
         )
 
     def send(self, records: List[VideoRecord]) -> bool:
-        if not all([EMAIL_FROM, EMAIL_TO, EMAIL_PASSWORD]):
-            logger.warning("Email non configure - rapport ignore")
+        api_key = os.getenv("RESEND_API_KEY", "")
+        if not api_key:
+            logger.warning("RESEND_API_KEY manquant - rapport ignore")
             return False
         try:
-            msg = MIMEMultipart("alternative")
-            msg["Subject"] = f"[Affiliation] Rapport du {datetime.now().strftime('%d/%m/%Y')}"
-            msg["From"] = EMAIL_FROM
-            msg["To"] = EMAIL_TO
-            msg.attach(MIMEText(self._build_html(records), "html"))
-            with smtplib.SMTP(self.SMTP_HOST, self.SMTP_PORT) as server:
-                server.ehlo()
-                server.starttls()
-                server.login(EMAIL_FROM, EMAIL_PASSWORD)
-                server.sendmail(EMAIL_FROM, EMAIL_TO, msg.as_string())
-            logger.info(f"Rapport envoye a {EMAIL_TO}")
+            import urllib.request
+            import json
+            html = self._build_html(records)
+            data = json.dumps({
+                "from": "ShopForYou <onboarding@resend.dev>",
+                "to": [EMAIL_TO],
+                "subject": f"[Affiliation] Rapport du {datetime.now().strftime('%d/%m/%Y')}",
+                "html": html
+            }).encode()
+            req = urllib.request.Request(
+                "https://api.resend.com/emails",
+                data=data,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json"
+                }
+            )
+            with urllib.request.urlopen(req) as resp:
+                logger.info(f"Rapport envoye via Resend : {resp.status}")
             return True
         except Exception as e:
-            logger.error(f"Erreur envoi email : {e}")
+            logger.error(f"Erreur envoi Resend : {e}")
             return False
 
 
