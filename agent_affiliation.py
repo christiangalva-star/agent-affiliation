@@ -10,6 +10,7 @@ import random
 import smtplib
 import logging
 import requests
+import schedule
 from datetime import datetime
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -431,4 +432,22 @@ def main():
     logger.info("=== Agent termine ===")
 
 if __name__ == "__main__":
-    main()
+    import schedule
+
+    def job():
+        logger.info("=== Lancement cycle automatique ===")
+        main()
+
+    # Publication chaque jour à 10h00 (heure Railway = UTC, donc 10h France = 8h UTC)
+    schedule.every().day.at("08:00").do(job)
+
+    logger.info("✅ Scheduler démarré — publication chaque jour à 10h00 (France)")
+    logger.info("⏳ Prochain cycle dans : " + str(schedule.next_run()))
+
+    # Lancement immédiat au démarrage
+    job()
+
+    # Boucle infinie
+    while True:
+        schedule.run_pending()
+        time.sleep(30)
