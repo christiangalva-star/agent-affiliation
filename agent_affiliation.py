@@ -375,8 +375,8 @@ class EmailReporter:
             import json
             html = self._build_html(records)
             data = json.dumps({
-                "from": "ShopForYou <onboarding@resend.dev>",
-                "to": [EMAIL_TO],
+                "from": "onboarding@resend.dev",
+                "to": ["christian.galva@gmail.com"],
                 "subject": f"[Affiliation] Rapport du {datetime.now().strftime('%d/%m/%Y')}",
                 "html": html
             }).encode()
