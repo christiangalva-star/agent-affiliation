@@ -1,100 +1,132 @@
 #!/usr/bin/env python3
 """
-Agent Affiliation Amazon -> TikTok
-4 modules : AmazonScanner, ContentGenerator, TikTokPublisher, EmailReporter
+Agent ShopForYou V2
+===================
+- Scan Amazon multi-niches (5-60€)
+- Mise à jour boutique GitHub Pages
+- Post automatique Instagram
+- Génération vidéo TikTok
+- Scheduler quotidien
 """
 
 import os
+import re
 import time
+import json
 import random
-import smtplib
 import logging
-import requests
 import schedule
+import requests
+import tempfile
+import base64
 from datetime import datetime
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from dataclasses import dataclass
 from typing import List, Optional
-
+from dataclasses import dataclass, asdict
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-logger = logging.getLogger(__name__)
+log = logging.getLogger("shopforyou")
 
-# ── CONFIGURATION ──────────────────────────────────────────────────────────────
+# ── CONFIG ─────────────────────────────────────────────────────────────────────
 AMAZON_TAG        = os.getenv("AMAZON_TAG", "shopforyou099-21")
-EMAIL_FROM        = os.getenv("EMAIL_FROM", "")
-EMAIL_TO          = os.getenv("EMAIL_TO", "")
-EMAIL_PASSWORD    = os.getenv("EMAIL_PASSWORD", "")
-TIKTOK_SESSION_ID = os.getenv("TIKTOK_SESSION_ID", "")
+GITHUB_TOKEN      = os.getenv("GITHUB_TOKEN", "")
+GITHUB_REPO       = os.getenv("GITHUB_REPO", "christiangalva-star/agent-affiliation")
+INSTAGRAM_TOKEN   = os.getenv("INSTAGRAM_TOKEN", "")
+INSTAGRAM_ACCOUNT = os.getenv("INSTAGRAM_ACCOUNT_ID", "")
+TIKTOK_SESSION_ID  = os.getenv("TIKTOK_SESSION_ID", "")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID", "")
+
+MIN_PRICE         = float(os.getenv("MIN_PRICE", "5.0"))
+MAX_PRICE         = float(os.getenv("MAX_PRICE", "60.0"))
 MIN_RATING        = float(os.getenv("MIN_RATING", "4.0"))
-MAX_PRICE         = float(os.getenv("MAX_PRICE", "50.0"))
-MIN_REVIEWS       = int(os.getenv("MIN_REVIEWS", "100"))
+MIN_REVIEWS       = int(os.getenv("MIN_REVIEWS", "50"))
+PRODUCTS_PER_DAY  = int(os.getenv("PRODUCTS_PER_DAY", "3"))
+PUBLISH_HOUR      = os.getenv("PUBLISH_HOUR", "09:00")
 
-HEADERS = {
-    "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                   "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"),
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
-
-CATEGORIES = [
-    "https://www.amazon.fr/s?k=gadget+cuisine&tag={tag}",
-    "https://www.amazon.fr/s?k=accessoire+sport&tag={tag}",
-    "https://www.amazon.fr/s?k=organisation+maison&tag={tag}",
-    "https://www.amazon.fr/s?k=soin+visage&tag={tag}",
-    "https://www.amazon.fr/s?k=gadget+bureau&tag={tag}",
+# Niches multi-catégories
+NICHES = [
+    {"query": "chaussettes fantaisie humour",       "category": "mode",     "emoji": "🧦"},
+    {"query": "lunettes soleil tendance femme",      "category": "mode",     "emoji": "🕶️"},
+    {"query": "bijoux fantaisie tendance",           "category": "mode",     "emoji": "💍"},
+    {"query": "sac main femme tendance",             "category": "mode",     "emoji": "👜"},
+    {"query": "bougie parfumée maison",              "category": "maison",   "emoji": "🕯️"},
+    {"query": "organisateur bureau rangement",       "category": "maison",   "emoji": "🗂️"},
+    {"query": "coussin décoratif salon",             "category": "maison",   "emoji": "🛋️"},
+    {"query": "plante artificielle décorative",      "category": "maison",   "emoji": "🪴"},
+    {"query": "sérum visage anti-âge",               "category": "beaute",   "emoji": "✨"},
+    {"query": "masque cheveux nourrissant",          "category": "beaute",   "emoji": "💆"},
+    {"query": "huile corps hydratante",              "category": "beaute",   "emoji": "🧴"},
+    {"query": "brosse maquillage professionnel",     "category": "beaute",   "emoji": "💄"},
+    {"query": "gadget cuisine original",             "category": "cuisine",  "emoji": "🍳"},
+    {"query": "thermos café inox",                   "category": "cuisine",  "emoji": "☕"},
+    {"query": "accessoire yoga fitness",             "category": "bienetre", "emoji": "🧘"},
+    {"query": "diffuseur huiles essentielles",       "category": "bienetre", "emoji": "🌿"},
 ]
 
+CAT_LABELS = {
+    "mode":     "Mode",
+    "maison":   "Maison",
+    "beaute":   "Beauté",
+    "cuisine":  "Cuisine",
+    "bienetre": "Bien-être",
+}
 
-# ── DATA CLASSES ───────────────────────────────────────────────────────────────
+HOOKS = [
+    "Stop scrolling, tu DOIS voir ça 👀",
+    "Ce produit va changer ta routine 🔥",
+    "La trouvaille de la semaine 😍",
+    "Tout le monde en parle en ce moment...",
+    "J'ai testé et c'est incroyable ✨",
+    "Le cadeau parfait à moins de {price}€ 🎁",
+    "Moins de {price}€ et c'est ouf 🤯",
+    "Comment j'ai découvert ça ? 👇",
+]
+
+# ── DATACLASS ──────────────────────────────────────────────────────────────────
 @dataclass
 class Product:
     title: str
-    url: str
     price: float
     rating: float
     reviews: int
     asin: str
-    image_url: str = ""
+    affiliate_url: str
+    image_url: str
+    category: str
+    emoji: str
     score: float = 0.0
-    affiliate_url: str = ""
 
-
-@dataclass
-class VideoRecord:
-    product_title: str
-    tiktok_url: str
-    published_at: str
-    score: float
-    price: float
-    rating: float
-
-
-# ── MODULE 1 : AMAZON SCANNER ──────────────────────────────────────────────────
+# ── MODULE 1 : SCANNER AMAZON ──────────────────────────────────────────────────
 class AmazonScanner:
-    """Scanne Amazon, filtre par note/prix/avis, calcule un score de pertinence."""
+    BASE = "https://www.amazon.fr/s"
 
-    def __init__(self):
-        self.session = requests.Session()
-        self.session.headers.update(HEADERS)
-
-    def _fetch(self, url: str):
+    def fetch(self, url: str) -> Optional[str]:
         try:
             with sync_playwright() as p:
-                browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
-                page = browser.new_context().new_page()
+                browser = p.chromium.launch(
+                    headless=True,
+                    args=["--no-sandbox", "--disable-setuid-sandbox"]
+                )
+                ctx = browser.new_context(
+                    locale="fr-FR",
+                    user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                               "AppleWebKit/537.36 (KHTML, like Gecko) "
+                               "Chrome/120.0.0.0 Safari/537.36"
+                )
+                page = ctx.new_page()
                 page.goto(url, timeout=30000, wait_until="domcontentloaded")
                 time.sleep(random.uniform(2, 4))
                 html = page.content()
                 browser.close()
-            return BeautifulSoup(html, "html.parser")
+            return html
         except Exception as e:
-            logger.warning(f"Erreur fetch {url}: {e}")
+            log.warning(f"Fetch error {url}: {e}")
             return None
 
-    def _parse_results(self, soup, tag: str) -> List[Product]:
+    def parse(self, html: str, niche: dict) -> List[Product]:
+        soup = BeautifulSoup(html, "html.parser")
         products = []
         for item in soup.select('[data-component-type="s-search-result"]'):
             try:
@@ -102,361 +134,309 @@ class AmazonScanner:
                 if not title_el:
                     continue
                 title = title_el.get_text(strip=True)
+
                 link_el = item.select_one("h2 a")
-                path = link_el["href"] if link_el else ""
+                path = link_el.get("href", "") if link_el else ""
                 asin = path.split("/dp/")[1].split("/")[0] if "/dp/" in path else ""
                 if not asin:
                     continue
-                url = f"https://www.amazon.fr/dp/{asin}?tag={tag}"
+
                 price_el = item.select_one(".a-price .a-offscreen")
-                price_txt = price_el.get_text(strip=True).replace(" ","").replace(",",".").replace("EUR","") if price_el else "0"
+                if not price_el:
+                    continue
+                price_txt = price_el.get_text(strip=True).replace(" ", "").replace(",", ".").replace("€", "").replace("EUR", "")
                 price = float("".join(c for c in price_txt if c.isdigit() or c == ".") or 0)
+                if not (MIN_PRICE <= price <= MAX_PRICE):
+                    continue
+
                 rating_el = item.select_one(".a-icon-alt")
-                rating_txt = rating_el.get_text(strip=True).split(" ")[0].replace(",",".") if rating_el else "0"
+                rating_txt = rating_el.get_text(strip=True).split(" ")[0].replace(",", ".") if rating_el else "0"
                 rating = float(rating_txt or 0)
-                reviews_el = item.select_one('[data-component-type="s-client-side-analytics"] .a-size-base')
-                reviews_txt = reviews_el.get_text(strip=True).replace(" ","").replace(",","") if reviews_el else "0"
+                if rating < MIN_RATING:
+                    continue
+
+                reviews_el = item.select_one(".a-size-base.s-underline-text")
+                reviews_txt = reviews_el.get_text(strip=True).replace(" ", "").replace("\xa0", "").replace(",", "") if reviews_el else "0"
                 reviews = int("".join(c for c in reviews_txt if c.isdigit()) or 0)
+                if reviews < MIN_REVIEWS:
+                    continue
+
                 img_el = item.select_one("img.s-image")
-                image_url = img_el["src"] if img_el else ""
+                image_url = img_el.get("src", "") if img_el else ""
+
+                affiliate_url = f"https://www.amazon.fr/dp/{asin}?tag={AMAZON_TAG}"
+
+                import math
+                score = (rating * 20) + (math.log10(reviews + 1) * 15) + max(0, (1 - price / MAX_PRICE) * 10)
+
                 products.append(Product(
-                    title=title, url=url, price=price, rating=rating,
-                    reviews=reviews, asin=asin, image_url=image_url, affiliate_url=url
+                    title=title, price=price, rating=rating, reviews=reviews,
+                    asin=asin, affiliate_url=affiliate_url, image_url=image_url,
+                    category=niche["category"], emoji=niche["emoji"], score=round(score, 2)
                 ))
-            except Exception as e:
-                logger.debug(f"Parse error: {e}")
+            except Exception:
+                continue
         return products
 
-    @staticmethod
-    def _compute_score(p: Product) -> float:
-        import math
-        r_score = p.rating * 20
-        v_score = math.log10(p.reviews + 1) * 15
-        p_score = max(0, (1 - p.price / MAX_PRICE) * 10) if MAX_PRICE else 0
-        return round(min(r_score + v_score + p_score, 100), 2)
-
     def scan(self) -> List[Product]:
-        all_products: List[Product] = []
-        for url_tpl in CATEGORIES:
-            url = url_tpl.format(tag=AMAZON_TAG)
-            logger.info(f"Scan: {url}")
-            soup = self._fetch(url)
-            if soup:
-                all_products.extend(self._parse_results(soup, AMAZON_TAG))
-            time.sleep(random.uniform(2, 5))
-        filtered = [
-            p for p in all_products
-            if p.rating >= MIN_RATING and p.price <= MAX_PRICE and p.reviews >= MIN_REVIEWS
-        ]
-        for p in filtered:
-            p.score = self._compute_score(p)
-        filtered.sort(key=lambda x: x.score, reverse=True)
-        logger.info(f"Produits retenus : {len(filtered)}/{len(all_products)}")
-        return filtered[:10]
+        all_products = []
+        niches = random.sample(NICHES, min(6, len(NICHES)))
+        for niche in niches:
+            url = f"{self.BASE}?k={requests.utils.quote(niche['query'])}&s=review-rank"
+            log.info(f"Scan: {niche['query']}")
+            html = self.fetch(url)
+            if html:
+                products = self.parse(html, niche)
+                all_products.extend(products)
+            time.sleep(random.uniform(3, 6))
 
+        all_products.sort(key=lambda x: x.score, reverse=True)
+        seen_asins = set()
+        unique = []
+        for p in all_products:
+            if p.asin not in seen_asins:
+                seen_asins.add(p.asin)
+                unique.append(p)
 
-# ── MODULE 2 : CONTENT GENERATOR ──────────────────────────────────────────────
-class ContentGenerator:
-    """Genere hook, script sequence, description et hashtags."""
+        log.info(f"Produits trouvés : {len(unique)}")
+        return unique[:PRODUCTS_PER_DAY]
 
-    HOOKS = [
-        "Tu DOIS voir ce produit Amazon !",
-        "J'ai trouve LA pepite Amazon du moment",
-        "Ce produit a change ma vie quotidienne",
-        "Amazon cache ce produit incroyable",
-        "Le meilleur achat Amazon a moins de {price}EUR",
-    ]
-    OUTROS = [
-        "Lien en bio | Code promo dispo !",
-        "Lien direct en bio - livraison rapide !",
-        "Clique sur le lien en bio avant rupture de stock !",
-    ]
-    HASHTAGS = [
-        "#amazon", "#amazonfrance", "#astucemaison", "#bonplan",
-        "#produitamazon", "#tiktokshop", "#trouvailleamazon",
-        "#lifehack", "#gadget", "#viral", "#fyp", "#pourtoi",
-        "#bonneaffaire", "#shoppingamazon", "#must_have",
-    ]
+# ── MODULE 2 : MISE À JOUR BOUTIQUE ────────────────────────────────────────────
+class ShopUpdater:
+    """Met à jour index.html sur GitHub Pages via l'API GitHub."""
+    API = "https://api.github.com"
 
-    def generate(self, product: Product) -> dict:
-        hook = random.choice(self.HOOKS).format(price=int(product.price))
-        script_lines = [
-            f"Hook : {hook}", "",
-            f"Produit : {product.title[:80]}", "",
-            f"Note : {product.rating}/5 - {product.reviews} avis verifies",
-            f"Prix : {product.price:.2f} EUR", "",
-            "Pourquoi c'est top :",
-            "  - Qualite exceptionnelle pour le prix",
-            "  - Livraison rapide Amazon Prime",
-            "  - Retours gratuits 30 jours", "",
-            f"Lien : {product.affiliate_url}", "",
-            random.choice(self.OUTROS),
-        ]
-        description = (
-            f"{hook}\n\n{product.title[:100]}\n"
-            f"{product.rating}/5 | {product.reviews} avis | {product.price:.2f} EUR"
-            f"\n\nLien en bio !"
-        )
-        hashtags = " ".join(random.sample(self.HASHTAGS, min(10, len(self.HASHTAGS))))
-        return {
-            "hook": hook,
-            "script": "\n".join(script_lines),
-            "description": description,
-            "hashtags": hashtags,
-            "full_caption": f"{description}\n\n{hashtags}",
+    def __init__(self):
+        self.headers = {
+            "Authorization": f"token {GITHUB_TOKEN}",
+            "Accept": "application/vnd.github.v3+json"
         }
 
+    def get_file(self):
+        r = requests.get(f"{self.API}/repos/{GITHUB_REPO}/contents/index.html", headers=self.headers)
+        r.raise_for_status()
+        data = r.json()
+        content = base64.b64decode(data["content"]).decode("utf-8")
+        sha = data["sha"]
+        return content, sha
 
-# ── MODULE 3 : TIKTOK PUBLISHER ───────────────────────────────────────────────
-class TikTokPublisher:
-    """Publie une video TikTok via Playwright (navigateur headless)."""
+    def build_card(self, p: Product) -> str:
+        stars = "★" * int(p.rating) + "☆" * (5 - int(p.rating))
+        cat_label = CAT_LABELS.get(p.category, p.category.capitalize())
+        title_short = p.title[:60] + "..." if len(p.title) > 60 else p.title
+        return f'''
+    <div class="card" data-cat="{p.category}">
+      <div class="card-img-wrap">
+        <div class="card-img">{p.emoji}</div>
+      </div>
+      <div class="card-body">
+        <span class="card-category">{cat_label}</span>
+        <p class="card-title">{title_short}</p>
+        <div class="card-meta">
+          <span class="stars">{stars}</span>
+          <span class="reviews">{p.rating} · {p.reviews} avis</span>
+        </div>
+        <div class="card-footer">
+          <div><div class="price">{p.price:.2f}€</div></div>
+          <a href="{p.affiliate_url}" class="btn-voir" target="_blank">Voir →</a>
+        </div>
+      </div>
+    </div>'''
 
-    UPLOAD_URL = "https://www.tiktok.com/upload"
-
-    def __init__(self, session_id: str):
-        self.session_id = session_id
-
-    def _make_video(self, product: Product, content: dict) -> str:
-        import textwrap
-        import tempfile
-        import urllib.request
-        from moviepy.editor import ImageClip, TextClip, CompositeVideoClip, ColorClip
-
-        tmp_img = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
-        try:
-            if product.image_url:
-                urllib.request.urlretrieve(product.image_url, tmp_img.name)
-        except Exception:
-            pass
-
-        duration = 15
-        clips = [ColorClip(size=(1080, 1920), color=(15, 15, 15), duration=duration)]
-        try:
-            clips.append(
-                ImageClip(tmp_img.name).resize(height=800)
-                .set_position(("center", 200)).set_duration(duration)
-            )
-        except Exception:
-            pass
-        try:
-            hook_text = textwrap.fill(content["hook"], width=30)
-            clips.append(
-                TextClip(hook_text, fontsize=60, color="white",
-                         font="DejaVu-Sans-Bold", method="caption", size=(1000, None))
-                .set_position(("center", 1100)).set_duration(duration)
-            )
-        except Exception:
-            pass
-        try:
-            clips.append(
-                TextClip(f"{product.price:.2f}EUR  {product.rating}/5",
-                         fontsize=50, color="#FFD700", font="DejaVu-Sans-Bold")
-                .set_position(("center", 1250)).set_duration(duration)
-            )
-        except Exception:
-            pass
-
-        out_path = tempfile.mktemp(suffix=".mp4")
-        CompositeVideoClip(clips).write_videofile(
-            out_path, fps=30, codec="libx264", audio=False, logger=None
-        )
-        return out_path
-
-    def publish(self, product: Product, content: dict) -> Optional[str]:
-        try:
-            video_path = self._make_video(product, content)
-            logger.info(f"Video generee : {video_path}")
-        except Exception as e:
-            logger.error(f"Generation video echouee : {e}")
-            return None
-
-        published_url = None
-        with sync_playwright() as pw:
-            browser = pw.chromium.launch(
-                headless=True,
-                args=["--no-sandbox", "--disable-setuid-sandbox"]
-            )
-            context = browser.new_context(
-                user_agent=HEADERS["User-Agent"],
-                viewport={"width": 1280, "height": 800}
-            )
-            context.add_cookies([{
-                "name": "sessionid", "value": self.session_id,
-                "domain": ".tiktok.com", "path": "/",
-                "secure": True, "httpOnly": True, "sameSite": "None"
-            }])
-            page = context.new_page()
-            try:
-                page.goto(self.UPLOAD_URL, timeout=60000)
-                page.wait_for_load_state("networkidle", timeout=30000)
-                file_input = page.query_selector('input[type="file"]')
-                if not file_input:
-                    logger.error("Champ file introuvable")
-                    return None
-                file_input.set_input_files(video_path)
-                page.wait_for_timeout(8000)
-                caption_sel = 'div[contenteditable="true"]'
-                page.wait_for_selector(caption_sel, timeout=30000)
-                caption_box = page.query_selector(caption_sel)
-                if caption_box:
-                    caption_box.click()
-                    caption_box.fill(content["full_caption"][:2200])
-                page.wait_for_timeout(2000)
-                publish_btn = (
-                    page.query_selector('button[data-e2e="upload-btn-post"]') or
-                    page.query_selector('button:has-text("Publier")')
-                )
-                if publish_btn:
-                    publish_btn.click()
-                    page.wait_for_timeout(5000)
-                    published_url = page.url
-                    logger.info(f"Publie : {published_url}")
-                else:
-                    logger.error("Bouton Publier introuvable")
-            except Exception as e:
-                logger.error(f"Erreur publication TikTok : {e}")
-            finally:
-                context.close()
-                browser.close()
-        return published_url
-
-
-# ── MODULE 4 : EMAIL REPORTER ──────────────────────────────────────────────────
-class EmailReporter:
-    """Envoie un rapport HTML quotidien avec tableau des videos publiees."""
-
-    SMTP_HOST = "smtp.gmail.com"
-    SMTP_PORT = 587
-
-    def _build_html(self, records: List[VideoRecord]) -> str:
-        rows = "".join(
-            f"<tr>"
-            f"<td style='padding:8px;border:1px solid #ddd'>{r.published_at}</td>"
-            f"<td style='padding:8px;border:1px solid #ddd'>{r.product_title[:60]}</td>"
-            f"<td style='padding:8px;border:1px solid #ddd'>{r.price:.2f} EUR</td>"
-            f"<td style='padding:8px;border:1px solid #ddd'>{r.rating}/5</td>"
-            f"<td style='padding:8px;border:1px solid #ddd'>{r.score}</td>"
-            f"<td style='padding:8px;border:1px solid #ddd'><a href='{r.tiktok_url}'>Voir</a></td>"
-            f"</tr>"
-            for r in records
-        )
-        avg = sum(r.score for r in records) / len(records) if records else 0
-        date_str = datetime.now().strftime("%d/%m/%Y a %H:%M")
-        return (
-            '<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">'
-            '<title>Rapport Affiliation</title>'
-            '<style>'
-            'body{font-family:Arial,sans-serif;background:#f5f5f5;color:#333}'
-            '.container{max-width:900px;margin:30px auto;background:#fff;padding:30px;'
-            'border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.1)}'
-            'h1{color:#FF0050}'
-            'table{width:100%;border-collapse:collapse;margin-top:20px}'
-            'th{background:#FF0050;color:#fff;padding:10px;text-align:left}'
-            'tr:nth-child(even){background:#fafafa}'
-            '.stat{display:inline-block;background:#FF0050;color:#fff;'
-            'padding:10px 20px;border-radius:5px;margin:5px;font-size:18px}'
-            '</style></head><body><div class="container">'
-            '<h1>Rapport Affiliation Amazon - TikTok</h1>'
-            f'<p>Genere le {date_str}</p>'
-            f'<div><span class="stat">{len(records)} video(s)</span>'
-            f'<span class="stat">Score moyen : {avg:.1f}</span></div>'
-            '<table><thead><tr><th>Date</th><th>Produit</th><th>Prix</th>'
-            '<th>Note</th><th>Score</th><th>TikTok</th></tr></thead>'
-            f'<tbody>{rows}</tbody></table></div></body></html>'
-        )
-
-    def send(self, records: List[VideoRecord]) -> bool:
-        api_key = os.getenv("RESEND_API_KEY", "")
-        if not api_key:
-            logger.warning("RESEND_API_KEY manquant - rapport ignore")
+    def update(self, products: List[Product]) -> bool:
+        if not GITHUB_TOKEN:
+            log.warning("GITHUB_TOKEN manquant — boutique non mise à jour")
             return False
         try:
-            import urllib.request
-            import json
-            html = self._build_html(records)
-            data = json.dumps({
-                "from": "onboarding@resend.dev",
-                "to": ["christian.galva@gmail.com"],
-                "subject": f"[Affiliation] Rapport du {datetime.now().strftime('%d/%m/%Y')}",
-                "html": html
-            }).encode()
-            req = urllib.request.Request(
-                "https://api.resend.com/emails",
-                data=data,
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json"
-                }
+            content, sha = self.get_file()
+            new_cards = "\n".join(self.build_card(p) for p in products)
+            marker_start = "<!-- PRODUITS_AUTO_START -->"
+            marker_end = "<!-- PRODUITS_AUTO_END -->"
+            if marker_start in content:
+                pattern = f"{marker_start}.*?{marker_end}"
+                replacement = f"{marker_start}\n{new_cards}\n    {marker_end}"
+                new_content = re.sub(pattern, replacement, content, flags=re.DOTALL)
+            else:
+                new_content = content.replace(
+                    '<div class="grid" id="grid">',
+                    f'<div class="grid" id="grid">\n    {marker_start}\n{new_cards}\n    {marker_end}'
+                )
+            encoded = base64.b64encode(new_content.encode("utf-8")).decode("utf-8")
+            payload = {
+                "message": f"[Auto] {len(products)} nouveaux produits — {datetime.now().strftime('%d/%m/%Y')}",
+                "content": encoded,
+                "sha": sha
+            }
+            r = requests.put(
+                f"{self.API}/repos/{GITHUB_REPO}/contents/index.html",
+                headers=self.headers,
+                json=payload
             )
-            with urllib.request.urlopen(req) as resp:
-                logger.info(f"Rapport envoye via Resend : {resp.status}")
+            r.raise_for_status()
+            log.info(f"✅ Boutique mise à jour avec {len(products)} produits")
             return True
         except Exception as e:
-            logger.error(f"Erreur envoi Resend : {e}")
+            log.error(f"Erreur mise à jour boutique : {e}")
             return False
 
+# ── MODULE 3 : NOTIFICATION TELEGRAM ─────────────────────────────────────────
+class TelegramNotifier:
+    """Envoie les posts sur Telegram pour publication manuelle."""
+    API = "https://api.telegram.org"
 
-# ── ORCHESTRATEUR PRINCIPAL ────────────────────────────────────────────────────
-def main():
-    logger.info("=== Agent Affiliation demarre ===")
+    def send_product(self, product: Product, hook: str) -> bool:
+        if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+            log.warning("Telegram non configuré")
+            return False
+        try:
+            caption = (
+                f"{hook}\n\n"
+                f"✨ {product.title[:80]}\n"
+                f"⭐ {product.rating}/5 · {product.reviews} avis\n"
+                f"💶 {product.price:.2f}€\n\n"
+                f"🔗 {product.affiliate_url}\n\n"
+                f"📲 Caption Instagram/TikTok :\n"
+                f"{hook}\n"
+                f"{product.emoji} {product.title[:60]}\n"
+                f"⭐ {product.rating}/5 · {product.reviews} avis\n"
+                f"💶 {product.price:.2f}€ seulement\n"
+                f"👉 shopforyou31.fr\n\n"
+                f"#shopforyou #{product.category} #bonplan #tendance #shopping"
+            )
+            if product.image_url:
+                r = requests.post(
+                    f"{self.API}/bot{TELEGRAM_BOT_TOKEN}/sendPhoto",
+                    data={
+                        "chat_id": TELEGRAM_CHAT_ID,
+                        "photo": product.image_url,
+                        "caption": caption[:1024],
+                        "parse_mode": "HTML"
+                    }
+                )
+            else:
+                r = requests.post(
+                    f"{self.API}/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+                    data={
+                        "chat_id": TELEGRAM_CHAT_ID,
+                        "text": caption[:4096],
+                        "parse_mode": "HTML"
+                    }
+                )
+            r.raise_for_status()
+            log.info(f"✅ Telegram envoyé : {product.title[:40]}")
+            return True
+        except Exception as e:
+            log.error(f"Erreur Telegram : {e}")
+            return False
 
-    # Produits hardcodés (fiables, déjà validés)
-    products = [
-        Product(
-            title="STC Chaussettes paillettes pipelette bleu",
-            url="https://amzn.to/4ddmLLI",
-            price=5.70,
-            rating=4.8,
-            reviews=145,
-            asin="B0DS6K72MD",
-            image_url="",
-            affiliate_url="https://amzn.to/4ddmLLI",
-            score=95.0
-        )
-    ]
+    def send_summary(self, products: List[Product]) -> bool:
+        if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+            return False
+        try:
+            text = (
+                f"🚀 <b>ShopForYou — Rapport du {datetime.now().strftime('%d/%m/%Y')}</b>\n\n"
+                f"✅ {len(products)} produits ajoutés à la boutique\n"
+                f"🌐 shopforyou31.fr\n\n"
+            )
+            for i, p in enumerate(products, 1):
+                text += f"{i}. {p.emoji} {p.title[:50]} — {p.price:.2f}€\n"
+            requests.post(
+                f"{self.API}/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+                data={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"}
+            )
+            return True
+        except Exception as e:
+            log.error(f"Erreur résumé Telegram : {e}")
+            return False
 
-    generator = ContentGenerator()
-    publisher = TikTokPublisher(session_id=TIKTOK_SESSION_ID)
-    reporter  = EmailReporter()
-    records   = []
+# ── MODULE 4 : GÉNÉRATION VIDÉO TIKTOK ────────────────────────────────────────
+class TikTokVideoGenerator:
+    """Génère une vidéo MP4 avec moviepy."""
 
-    for product in products[:3]:
-        content = generator.generate(product)
-        logger.info(f"Hook genere : {content['hook']}")
-        if TIKTOK_SESSION_ID:
-            tiktok_url = publisher.publish(product, content)
-        else:
-            tiktok_url = "simulation"
-            logger.warning("TIKTOK_SESSION_ID manquant")
-        records.append(VideoRecord(
-            product_title=product.title,
-            tiktok_url=tiktok_url or "erreur",
-            published_at=datetime.now().strftime("%d/%m/%Y %H:%M"),
-            score=product.score,
-            price=product.price,
-            rating=product.rating,
-        ))
+    def generate(self, product: Product, hook: str) -> Optional[str]:
+        try:
+            import urllib.request
+            from moviepy.editor import (
+                ColorClip, ImageClip, TextClip, CompositeVideoClip
+            )
+            tmp_img = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
+            if product.image_url:
+                urllib.request.urlretrieve(product.image_url, tmp_img.name)
+            duration = 15
+            bg = ColorClip(size=(1080, 1920), color=(15, 15, 15), duration=duration)
+            clips = [bg]
+            try:
+                img = ImageClip(tmp_img.name).resize(height=900).set_position("center").set_duration(duration)
+                clips.append(img)
+            except Exception:
+                pass
+            texts = [
+                (hook[:40], 80, "white", 1150),
+                (f"⭐ {product.rating}/5 · {product.reviews} avis", 50, "#FFD700", 1300),
+                (f"{product.price:.2f}€ seulement", 60, "#FF9900", 1400),
+                ("👉 shopforyou31.fr", 55, "#E8784A", 1550),
+            ]
+            for text, size, color, y in texts:
+                try:
+                    tc = TextClip(text, fontsize=size, color=color,
+                                  font="DejaVu-Sans-Bold", method="caption",
+                                  size=(1000, None)).set_position(("center", y)).set_duration(duration)
+                    clips.append(tc)
+                except Exception:
+                    pass
+            out = tempfile.mktemp(suffix=".mp4")
+            CompositeVideoClip(clips).write_videofile(out, fps=30, codec="libx264", audio=False, logger=None)
+            log.info(f"✅ Vidéo TikTok générée : {out}")
+            return out
+        except Exception as e:
+            log.error(f"Erreur génération vidéo : {e}")
+            return None
 
-    reporter.send(records)
-    logger.info("=== Agent termine ===")
+# ── ORCHESTRATEUR ───────────────────────────────────────────────────────────────
+class ShopForYouAgent:
+
+    def __init__(self):
+        self.scanner  = AmazonScanner()
+        self.updater  = ShopUpdater()
+        self.telegram = TelegramNotifier()
+        self.tiktok   = TikTokVideoGenerator()
+
+    def run(self):
+        log.info("=" * 60)
+        log.info(f"🚀 Cycle ShopForYou — {datetime.now().strftime('%d/%m/%Y %H:%M')}")
+
+        products = self.scanner.scan()
+        if not products:
+            log.warning("Aucun produit trouvé — utilisation produit par défaut")
+            products = [Product(
+                title="STC Chaussettes Paillettes Pipelette Bleu",
+                price=5.70, rating=4.8, reviews=145,
+                asin="B0DS6K72MD",
+                affiliate_url="https://amzn.to/4ddmLLI",
+                image_url="", category="mode", emoji="🧦", score=95.0
+            )]
+
+        log.info(f"Top produit : {products[0].title[:50]} ({products[0].price}€)")
+        self.updater.update(products)
+
+        for i, product in enumerate(products):
+            hook = random.choice(HOOKS).replace("{price}", str(int(product.price)))
+            log.info(f"Produit {i+1}/{len(products)} : {product.title[:40]}")
+            self.telegram.send_product(product, hook)
+            time.sleep(random.uniform(5, 10))
+            self.tiktok.generate(product, hook)
+            time.sleep(random.uniform(5, 10))
+
+        self.telegram.send_summary(products)
+        log.info("✅ Cycle terminé !")
+
+    def start(self):
+        log.info(f"🟢 Agent démarré — Publication à {PUBLISH_HOUR} chaque jour")
+        schedule.every().day.at(PUBLISH_HOUR).do(self.run)
+        self.run()
+        while True:
+            schedule.run_pending()
+            time.sleep(60)
 
 if __name__ == "__main__":
-    import schedule
-
-    def job():
-        logger.info("=== Lancement cycle automatique ===")
-        main()
-
-    # Publication chaque jour à 10h00 (heure Railway = UTC, donc 10h France = 8h UTC)
-    schedule.every().day.at("08:00").do(job)
-
-    logger.info("✅ Scheduler démarré — publication chaque jour à 10h00 (France)")
-    logger.info("⏳ Prochain cycle dans : " + str(schedule.next_run()))
-
-    # Lancement immédiat au démarrage
-    job()
-
-    # Boucle infinie
-    while True:
-        schedule.run_pending()
-        time.sleep(30)
+    ShopForYouAgent().start()
