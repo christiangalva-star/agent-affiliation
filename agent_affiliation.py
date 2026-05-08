@@ -8,7 +8,6 @@ Agent ShopForYou V2
 - Génération vidéo TikTok
 - Scheduler quotidien
 """
-
 import os
 import re
 import time
@@ -412,7 +411,7 @@ class ShopForYouAgent:
                 title="STC Chaussettes Paillettes Pipelette Bleu",
                 price=5.70, rating=4.8, reviews=145,
                 asin="B0DS6K72MD",
-                affiliate_url="https://amzn.to/4ddmLLI",
+                affiliate_url="https://www.amazon.fr/dp/B0DS6K72MD?tag=shopforyou099-21",
                 image_url="", category="mode", emoji="🧦", score=95.0
             )]
 
