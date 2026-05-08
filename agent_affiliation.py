@@ -483,7 +483,7 @@ class ShopForYouAgent:
                 price=5.70, rating=4.8, reviews=145,
                 asin="B0DS6K72MD",
                 affiliate_url="https://www.amazon.fr/dp/B0DS6K72MD?tag=shopforyou099-21",
-                image_url="", category="mode", emoji="🧦", score=95.0
+                image_url="https://m.media-amazon.com/images/I/71YnNpHKHNL._AC_SX466_.jpg", category="mode", emoji="🧦", score=95.0
             )]
 
         log.info(f"Top produit : {products[0].title[:50]} ({products[0].price}€)")
