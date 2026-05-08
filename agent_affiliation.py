@@ -373,24 +373,31 @@ class TelegramNotifier:
             image_to_send = ai_image_url or (product.image_url if product.image_url else None)
 
             if image_to_send:
-                r = requests.post(
-                    f"{self.API}/bot{TELEGRAM_BOT_TOKEN}/sendPhoto",
-                    data={
-                        "chat_id": TELEGRAM_CHAT_ID,
-                        "photo": image_to_send,
-                        "caption": caption[:1024],
-                        "parse_mode": "HTML"
-                    }
-                )
-            else:
-                r = requests.post(
-                    f"{self.API}/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-                    data={
-                        "chat_id": TELEGRAM_CHAT_ID,
-                        "text": caption[:4096],
-                        "parse_mode": "HTML"
-                    }
-                )
+                try:
+                    # Télécharger l'image d'abord
+                    import urllib.request
+                    img_data = urllib.request.urlopen(
+                        urllib.request.Request(image_to_send, headers={"User-Agent": "Mozilla/5.0"})
+                    ).read()
+                    r = requests.post(
+                        f"{self.API}/bot{TELEGRAM_BOT_TOKEN}/sendPhoto",
+                        data={
+                            "chat_id": TELEGRAM_CHAT_ID,
+                            "caption": caption[:1024],
+                            "parse_mode": "HTML"
+                        },
+                        files={"photo": ("image.jpg", img_data, "image/jpeg")}
+                    )
+                except Exception:
+                    # Si échec image, envoyer texte seulement
+                    r = requests.post(
+                        f"{self.API}/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+                        data={
+                            "chat_id": TELEGRAM_CHAT_ID,
+                            "text": caption[:4096],
+                            "parse_mode": "HTML"
+                        }
+                    )
             r.raise_for_status()
             log.info(f"✅ Telegram envoyé : {product.title[:40]}")
             return True
