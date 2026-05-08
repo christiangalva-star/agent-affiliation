@@ -304,12 +304,13 @@ class ImageGenerator:
 
             # Lancer la génération
             r = requests.post(
-                "https://api.replicate.com/v1/models/black-forest-labs/flux-schnell/predictions",
+                "https://api.replicate.com/v1/predictions",
                 headers={
                     "Authorization": f"Token {self.REPLICATE_TOKEN}",
                     "Content-Type": "application/json"
                 },
                 json={
+                    "version": "5f24084160c9089501c1b3545d9be3c27883ae2239b6f412990e82d4a6210f8",
                     "input": {
                         "prompt": prompt,
                         "width": 768,
