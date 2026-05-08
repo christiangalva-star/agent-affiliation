@@ -278,36 +278,106 @@ class ShopUpdater:
             log.error(f"Erreur mise à jour boutique : {e}")
             return False
 
-# ── MODULE 3 : NOTIFICATION TELEGRAM ─────────────────────────────────────────
+# ── MODULE 3 : GÉNÉRATION IMAGE IA ────────────────────────────────────────────
+class ImageGenerator:
+    """Génère des images lifestyle via Replicate (Stable Diffusion)."""
+
+    REPLICATE_TOKEN = os.getenv("REPLICATE_API_TOKEN", "")
+
+    PROMPTS = {
+        "mode":     "elegant young woman wearing {product}, lifestyle photo, neutral background, professional fashion photography, soft lighting, high quality",
+        "maison":   "{product} in a modern bright living room, interior design photo, cozy atmosphere, professional photography",
+        "beaute":   "beautiful woman using {product}, spa atmosphere, soft lighting, beauty photography, professional",
+        "cuisine":  "{product} in a modern kitchen, food photography style, bright lighting, professional",
+        "bienetre": "person using {product}, zen atmosphere, wellness lifestyle photo, soft natural lighting",
+        "default":  "{product} product showcase, lifestyle photography, professional, high quality",
+    }
+
+    def generate(self, product_title: str, category: str) -> str | None:
+        if not self.REPLICATE_TOKEN:
+            return None
+        try:
+            prompt_template = self.PROMPTS.get(category, self.PROMPTS["default"])
+            product_short = product_title[:50]
+            prompt = prompt_template.replace("{product}", product_short)
+            prompt += ", 9:16 vertical format, instagram story style"
+
+            # Lancer la génération
+            r = requests.post(
+                "https://api.replicate.com/v1/models/stability-ai/stable-diffusion-3/predictions",
+                headers={
+                    "Authorization": f"Token {self.REPLICATE_TOKEN}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "input": {
+                        "prompt": prompt,
+                        "width": 768,
+                        "height": 1344,
+                        "num_outputs": 1,
+                    }
+                }
+            )
+            r.raise_for_status()
+            prediction = r.json()
+            prediction_id = prediction["id"]
+
+            # Attendre le résultat (max 60s)
+            for _ in range(30):
+                time.sleep(3)
+                r2 = requests.get(
+                    f"https://api.replicate.com/v1/predictions/{prediction_id}",
+                    headers={"Authorization": f"Token {self.REPLICATE_TOKEN}"}
+                )
+                data = r2.json()
+                if data["status"] == "succeeded":
+                    image_url = data["output"][0]
+                    log.info(f"✅ Image IA générée : {image_url}")
+                    return image_url
+                elif data["status"] == "failed":
+                    log.error("Génération image IA échouée")
+                    return None
+
+        except Exception as e:
+            log.error(f"Erreur Replicate : {e}")
+            return None
+
+
+# ── MODULE 4 : NOTIFICATION TELEGRAM ─────────────────────────────────────────
 class TelegramNotifier:
     """Envoie les posts sur Telegram pour publication manuelle."""
+
     API = "https://api.telegram.org"
 
-    def send_product(self, product: Product, hook: str) -> bool:
+    def send_product(self, product, hook: str, ai_image_url: str = None) -> bool:
         if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
             log.warning("Telegram non configuré")
             return False
         try:
             caption = (
+                f"🎯 <b>STORY PRÊTE À POSTER</b>\n\n"
                 f"{hook}\n\n"
                 f"✨ {product.title[:80]}\n"
                 f"⭐ {product.rating}/5 · {product.reviews} avis\n"
                 f"💶 {product.price:.2f}€\n\n"
                 f"🔗 {product.affiliate_url}\n\n"
-                f"📲 Caption Instagram/TikTok :\n"
+                f"📲 <b>Caption Instagram/TikTok :</b>\n"
                 f"{hook}\n"
                 f"{product.emoji} {product.title[:60]}\n"
                 f"⭐ {product.rating}/5 · {product.reviews} avis\n"
                 f"💶 {product.price:.2f}€ seulement\n"
                 f"👉 shopforyou31.fr\n\n"
-                f"#shopforyou #{product.category} #bonplan #tendance #shopping"
+                f"#shopforyou #{product.category} #bonplan #tendance #shopping #lifestyle"
             )
-            if product.image_url:
+
+            image_to_send = ai_image_url or (product.image_url if product.image_url else None)
+
+            if image_to_send:
                 r = requests.post(
                     f"{self.API}/bot{TELEGRAM_BOT_TOKEN}/sendPhoto",
                     data={
                         "chat_id": TELEGRAM_CHAT_ID,
-                        "photo": product.image_url,
+                        "photo": image_to_send,
                         "caption": caption[:1024],
                         "parse_mode": "HTML"
                     }
@@ -328,13 +398,13 @@ class TelegramNotifier:
             log.error(f"Erreur Telegram : {e}")
             return False
 
-    def send_summary(self, products: List[Product]) -> bool:
+    def send_summary(self, products) -> bool:
         if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
             return False
         try:
             text = (
                 f"🚀 <b>ShopForYou — Rapport du {datetime.now().strftime('%d/%m/%Y')}</b>\n\n"
-                f"✅ {len(products)} produits ajoutés à la boutique\n"
+                f"✅ {len(products)} produits traités\n"
                 f"🌐 shopforyou31.fr\n\n"
             )
             for i, p in enumerate(products, 1):
@@ -399,6 +469,7 @@ class ShopForYouAgent:
         self.updater  = ShopUpdater()
         self.telegram = TelegramNotifier()
         self.tiktok   = TikTokVideoGenerator()
+        self.image_gen = ImageGenerator()
 
     def run(self):
         log.info("=" * 60)
@@ -425,7 +496,8 @@ class ShopForYouAgent:
         for i, product in enumerate(products):
             hook = random.choice(HOOKS).replace("{price}", str(int(product.price)))
             log.info(f"Produit {i+1}/{len(products)} : {product.title[:40]}")
-            self.telegram.send_product(product, hook)
+            ai_image = self.image_gen.generate(product.title, product.category)
+            self.telegram.send_product(product, hook, ai_image)
             time.sleep(random.uniform(5, 10))
             self.tiktok.generate(product, hook)
             time.sleep(random.uniform(5, 10))
