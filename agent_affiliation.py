@@ -416,7 +416,11 @@ class ShopForYouAgent:
             )]
 
         log.info(f"Top produit : {products[0].title[:50]} ({products[0].price}€)")
-        self.updater.update(products)
+        # Ne mettre à jour la boutique que si de vrais produits sont trouvés
+        if products[0].asin != "B0DS6K72MD":
+            self.updater.update(products)
+        else:
+            log.info("Produit par défaut — boutique non modifiée")
 
         for i, product in enumerate(products):
             hook = random.choice(HOOKS).replace("{price}", str(int(product.price)))
