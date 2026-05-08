@@ -304,7 +304,7 @@ class ImageGenerator:
 
             # Lancer la génération
             r = requests.post(
-                "https://api.replicate.com/v1/models/stability-ai/stable-diffusion-3/predictions",
+                "https://api.replicate.com/v1/models/black-forest-labs/flux-schnell/predictions",
                 headers={
                     "Authorization": f"Token {self.REPLICATE_TOKEN}",
                     "Content-Type": "application/json"
@@ -503,6 +503,7 @@ class ShopForYouAgent:
         for i, product in enumerate(products):
             hook = random.choice(HOOKS).replace("{price}", str(int(product.price)))
             log.info(f"Produit {i+1}/{len(products)} : {product.title[:40]}")
+            # Toujours générer une image IA
             ai_image = self.image_gen.generate(product.title, product.category)
             self.telegram.send_product(product, hook, ai_image)
             time.sleep(random.uniform(5, 10))
