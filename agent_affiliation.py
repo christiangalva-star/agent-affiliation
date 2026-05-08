@@ -312,12 +312,12 @@ class ImageGenerator:
                     "Content-Type": "application/json"
                 },
                 json={
-                    "version": "5f24084160c9089501c1b3545d9be3c27883ae2239b6f412990e82d4a6210f8",
+                    "version": "black-forest-labs/flux-schnell",
                     "input": {
                         "prompt": prompt,
-                        "width": 768,
-                        "height": 1344,
+                        "aspect_ratio": "9:16",
                         "num_outputs": 1,
+                        "output_format": "jpg"
                     }
                 }
             )
