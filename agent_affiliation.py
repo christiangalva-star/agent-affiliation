@@ -295,7 +295,9 @@ class ImageGenerator:
 
     def generate(self, product_title: str, category: str) -> str | None:
         if not self.REPLICATE_TOKEN:
+            log.warning("REPLICATE_API_TOKEN manquant")
             return None
+        log.info(f"Génération image IA pour : {product_title[:40]}")
         try:
             prompt_template = self.PROMPTS.get(category, self.PROMPTS["default"])
             product_short = product_title[:50]
@@ -340,7 +342,7 @@ class ImageGenerator:
                     return None
 
         except Exception as e:
-            log.error(f"Erreur Replicate : {e}")
+            log.error(f"Erreur Replicate détaillée : {type(e).__name__} — {e}")
             return None
 
 
