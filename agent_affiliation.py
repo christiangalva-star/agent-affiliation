@@ -147,11 +147,12 @@ class AmazonScanner:
                     if reviews < MIN_REVIEWS:
                         continue
 
-                    # Filtre 400 achats dans les 30 derniers jours
-                    purchases_str = str(item.get("bought_in_past_month", "0")).replace("+", "").replace(" ", "").replace(",", "")
-                    purchases = int("".join(c for c in purchases_str if c.isdigit()) or 0)
-                    if purchases < 400:
-                        continue
+                    # Filtre 400 achats dans les 30 derniers jours (optionnel)
+                    purchases_str = str(item.get("bought_in_past_month", "")).replace("+", "").replace(" ", "").replace(",", "")
+                    if purchases_str:
+                        purchases = int("".join(c for c in purchases_str if c.isdigit()) or 0)
+                        if purchases < 400:
+                            continue
                     image_url = item.get("image", "")
                     affiliate_url = f"https://www.amazon.fr/dp/{asin}?tag={AMAZON_TAG}"
                     import math
