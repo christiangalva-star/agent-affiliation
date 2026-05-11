@@ -28,3 +28,4 @@ COPY agent_affiliation.py .
 
 CMD ["python", "agent_affiliation.py"]
 # rebuild mar.  5 mai 2026 18:51:56 CEST
+# redeploy lun. 11 mai 2026 11:08:03 CEST
