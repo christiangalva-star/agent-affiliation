@@ -107,67 +107,60 @@ class AmazonScanner:
             if not api_key:
                 log.warning("SCRAPER_API_KEY manquant")
                 return None
-            scraper_url = f"http://api.scraperapi.com?api_key={api_key}&url={url}&country_code=fr&render=false"
-            r = requests.get(scraper_url, timeout=60)
+            # Utiliser l'endpoint Amazon structuré de ScraperAPI
+            import urllib.parse
+            query = urllib.parse.parse_qs(urllib.parse.urlparse(url).query).get('k', [''])[0]
+            scraper_url = f"https://api.scraperapi.com/structured/amazon/search"
+            r = requests.get(scraper_url, params={
+                "api_key": api_key,
+                "query": query,
+                "country": "fr",
+                "tld": "fr"
+            }, timeout=60)
             r.raise_for_status()
-            log.info(f"ScraperAPI OK — {len(r.text)} chars")
+            log.info(f"ScraperAPI structured OK — {len(r.text)} chars")
             return r.text
         except Exception as e:
             log.warning(f"Fetch error {url}: {e}")
             return None
 
     def parse(self, html: str, niche: dict) -> List[Product]:
-        soup = BeautifulSoup(html, "html.parser")
-        products = []
-        for item in soup.select('[data-component-type="s-search-result"]'):
-            try:
-                title_el = item.select_one("h2 a span")
-                if not title_el:
+        try:
+            data = json.loads(html)
+            products = []
+            for item in data.get("results", []):
+                try:
+                    title = item.get("name", "")
+                    if not title:
+                        continue
+                    asin = item.get("asin", "")
+                    if not asin:
+                        continue
+                    price_str = str(item.get("price", "0")).replace(",", ".").replace("€", "").strip()
+                    price = float("".join(c for c in price_str if c.isdigit() or c == ".") or 0)
+                    if not (MIN_PRICE <= price <= MAX_PRICE):
+                        continue
+                    rating = float(str(item.get("stars", "0")).replace(",", ".") or 0)
+                    if rating < MIN_RATING:
+                        continue
+                    reviews = int(str(item.get("total_reviews", "0")).replace(" ", "").replace(",", "") or 0)
+                    if reviews < MIN_REVIEWS:
+                        continue
+                    image_url = item.get("image", "")
+                    affiliate_url = f"https://www.amazon.fr/dp/{asin}?tag={AMAZON_TAG}"
+                    import math
+                    score = (rating * 20) + (math.log10(reviews + 1) * 15) + max(0, (1 - price / MAX_PRICE) * 10)
+                    products.append(Product(
+                        title=title, price=price, rating=rating, reviews=reviews,
+                        asin=asin, affiliate_url=affiliate_url, image_url=image_url,
+                        category=niche["category"], emoji=niche["emoji"], score=round(score, 2)
+                    ))
+                except Exception:
                     continue
-                title = title_el.get_text(strip=True)
-
-                link_el = item.select_one("h2 a")
-                path = link_el.get("href", "") if link_el else ""
-                asin = path.split("/dp/")[1].split("/")[0] if "/dp/" in path else ""
-                if not asin:
-                    continue
-
-                price_el = item.select_one(".a-price .a-offscreen")
-                if not price_el:
-                    continue
-                price_txt = price_el.get_text(strip=True).replace(" ", "").replace(",", ".").replace("€", "").replace("EUR", "")
-                price = float("".join(c for c in price_txt if c.isdigit() or c == ".") or 0)
-                if not (MIN_PRICE <= price <= MAX_PRICE):
-                    continue
-
-                rating_el = item.select_one(".a-icon-alt")
-                rating_txt = rating_el.get_text(strip=True).split(" ")[0].replace(",", ".") if rating_el else "0"
-                rating = float(rating_txt or 0)
-                if rating < MIN_RATING:
-                    continue
-
-                reviews_el = item.select_one(".a-size-base.s-underline-text")
-                reviews_txt = reviews_el.get_text(strip=True).replace(" ", "").replace("\xa0", "").replace(",", "") if reviews_el else "0"
-                reviews = int("".join(c for c in reviews_txt if c.isdigit()) or 0)
-                if reviews < MIN_REVIEWS:
-                    continue
-
-                img_el = item.select_one("img.s-image")
-                image_url = img_el.get("src", "") if img_el else ""
-
-                affiliate_url = f"https://www.amazon.fr/dp/{asin}?tag={AMAZON_TAG}"
-
-                import math
-                score = (rating * 20) + (math.log10(reviews + 1) * 15) + max(0, (1 - price / MAX_PRICE) * 10)
-
-                products.append(Product(
-                    title=title, price=price, rating=rating, reviews=reviews,
-                    asin=asin, affiliate_url=affiliate_url, image_url=image_url,
-                    category=niche["category"], emoji=niche["emoji"], score=round(score, 2)
-                ))
-            except Exception:
-                continue
-        return products
+            return products
+        except Exception as e:
+            log.error(f"Erreur parsing JSON : {e}")
+            return []
 
     def scan(self) -> List[Product]:
         all_products = []
