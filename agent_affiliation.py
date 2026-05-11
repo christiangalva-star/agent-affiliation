@@ -146,7 +146,10 @@ class AmazonScanner:
                     reviews = int(str(item.get("total_reviews", "0")).replace(" ", "").replace(",", "") or 0)
                     if reviews < MIN_REVIEWS:
                         continue
-                    purchases = int(str(item.get("bought_in_past_month", "0")).replace("+", "").replace(" ", "").replace(",", "") or 0)
+
+                    # Filtre 400 achats dans les 30 derniers jours
+                    purchases_str = str(item.get("bought_in_past_month", "0")).replace("+", "").replace(" ", "").replace(",", "")
+                    purchases = int("".join(c for c in purchases_str if c.isdigit()) or 0)
                     if purchases < 400:
                         continue
                     image_url = item.get("image", "")
@@ -167,31 +170,40 @@ class AmazonScanner:
 
     def scan(self) -> List[Product]:
         all_products = []
-        niches = random.sample(NICHES, min(6, len(NICHES)))
-        for niche in niches:
-            url = f"{self.BASE}?k={requests.utils.quote(niche['query'])}&s=review-rank"
-            log.info(f"Scan: {niche['query']}")
-            html = self.fetch(url)
-            if html:
-                products = self.parse(html, niche)
-                all_products.extend(products)
-            time.sleep(random.uniform(3, 6))
 
-        all_products.sort(key=lambda x: x.score, reverse=True)
-        seen_asins = set()
-        unique = []
-        for p in all_products:
-            if p.asin not in seen_asins:
-                seen_asins.add(p.asin)
-                unique.append(p)
+        # Une niche par catégorie
+        categories = {
+            "mode":     [n for n in NICHES if n["category"] == "mode"],
+            "maison":   [n for n in NICHES if n["category"] == "maison"],
+            "bienetre": [n for n in NICHES if n["category"] == "bienetre"],
+            "beaute":   [n for n in NICHES if n["category"] == "beaute"],
+            "cuisine":  [n for n in NICHES if n["category"] == "cuisine"],
+        }
 
-        log.info(f"Produits trouvés : {len(unique)}")
-        return unique[:PRODUCTS_PER_DAY]
+        best_per_category = {}
 
-# ── MODULE 2 : MISE À JOUR BOUTIQUE ────────────────────────────────────────────
-class ShopUpdater:
-    """Met à jour index.html sur GitHub Pages via l'API GitHub."""
-    API = "https://api.github.com"
+        for cat, niches in categories.items():
+            cat_products = []
+            for niche in niches:
+                url = f"{self.BASE}?k={requests.utils.quote(niche['query'])}&s=review-rank"
+                log.info(f"Scan [{cat}]: {niche['query']}")
+                html = self.fetch(url)
+                if html:
+                    products = self.parse(html, niche)
+                    cat_products.extend(products)
+                time.sleep(random.uniform(2, 4))
+
+            if cat_products:
+                cat_products.sort(key=lambda x: x.score, reverse=True)
+                best = cat_products[0]
+                best_per_category[cat] = best
+                log.info(f"✅ [{cat}] Meilleur : {best.title[:40]} ({best.price}€, {best.reviews} avis)")
+            else:
+                log.warning(f"❌ [{cat}] Aucun produit trouvé")
+
+        result = list(best_per_category.values())
+        log.info(f"Total produits sélectionnés : {len(result)}/5")
+        return result
 
     def __init__(self):
         self.headers = {
