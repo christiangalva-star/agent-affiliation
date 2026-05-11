@@ -143,27 +143,18 @@ class AmazonScanner:
                     rating = float(str(item.get("stars", "0")).replace(",", ".") or 0)
                     if rating < MIN_RATING:
                         continue
-                    reviews = int(str(item.get("total_reviews", "0")).replace(" ", "").replace(",", "") or 0)
-                    if reviews < MIN_REVIEWS:
-                        continue
-
-                    # Filtre 400 achats dans les 30 derniers jours (optionnel)
-                    purchases_str = str(item.get("bought_in_past_month", "")).replace("+", "").replace(" ", "").replace(",", "")
-                    if purchases_str:
-                        purchases = int("".join(c for c in purchases_str if c.isdigit()) or 0)
-                        if purchases < 400:
-                            continue
                     image_url = item.get("image", "")
                     affiliate_url = f"https://www.amazon.fr/dp/{asin}?tag={AMAZON_TAG}"
                     import math
-                    score = (rating * 20) + (math.log10(reviews + 1) * 15) + max(0, (1 - price / MAX_PRICE) * 10)
+                    score = (rating * 20) + max(0, (1 - price / MAX_PRICE) * 10)
                     products.append(Product(
-                        title=title, price=price, rating=rating, reviews=reviews,
+                        title=title, price=price, rating=rating, reviews=0,
                         asin=asin, affiliate_url=affiliate_url, image_url=image_url,
                         category=niche["category"], emoji=niche["emoji"], score=round(score, 2)
                     ))
                 except Exception:
                     continue
+            log.info(f"Produits parsés : {len(products)}")
             return products
         except Exception as e:
             log.error(f"Erreur parsing JSON : {e}")
