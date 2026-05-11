@@ -146,6 +146,9 @@ class AmazonScanner:
                     reviews = int(str(item.get("total_reviews", "0")).replace(" ", "").replace(",", "") or 0)
                     if reviews < MIN_REVIEWS:
                         continue
+                    purchases = int(str(item.get("bought_in_past_month", "0")).replace("+", "").replace(" ", "").replace(",", "") or 0)
+                    if purchases < 400:
+                        continue
                     image_url = item.get("image", "")
                     affiliate_url = f"https://www.amazon.fr/dp/{asin}?tag={AMAZON_TAG}"
                     import math
