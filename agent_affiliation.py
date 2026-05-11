@@ -107,7 +107,7 @@ class AmazonScanner:
             if not api_key:
                 log.warning("SCRAPER_API_KEY manquant")
                 return None
-            scraper_url = f"http://api.scraperapi.com?api_key={api_key}&url={requests.utils.quote(url)}&country_code=fr"
+            scraper_url = f"http://api.scraperapi.com?api_key={api_key}&url={url}&country_code=fr&render=false"
             r = requests.get(scraper_url, timeout=60)
             r.raise_for_status()
             log.info(f"ScraperAPI OK — {len(r.text)} chars")
