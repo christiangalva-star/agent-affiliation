@@ -344,7 +344,7 @@ class TelegramNotifier:
 
     API = "https://api.telegram.org"
 
-    def send_product(self, product, hook: str, ai_image_url: str = None) -> bool:
+    def send_product(self, product, hook: str) -> bool:
         if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
             log.warning("Telegram non configuré")
             return False
@@ -364,35 +364,14 @@ class TelegramNotifier:
                 f"👉 shopforyou31.fr\n\n"
                 f"#shopforyou #{product.category} #bonplan #tendance #shopping #lifestyle"
             )
-
-            image_to_send = ai_image_url or (product.image_url if product.image_url else None)
-
-            if image_to_send:
-                try:
-                    # Télécharger l'image d'abord
-                    import urllib.request
-                    img_data = urllib.request.urlopen(
-                        urllib.request.Request(image_to_send, headers={"User-Agent": "Mozilla/5.0"})
-                    ).read()
-                    r = requests.post(
-                        f"{self.API}/bot{TELEGRAM_BOT_TOKEN}/sendPhoto",
-                        data={
-                            "chat_id": TELEGRAM_CHAT_ID,
-                            "caption": caption[:1024],
-                            "parse_mode": "HTML"
-                        },
-                        files={"photo": ("image.jpg", img_data, "image/jpeg")}
-                    )
-                except Exception:
-                    # Si échec image, envoyer texte seulement
-                    r = requests.post(
-                        f"{self.API}/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-                        data={
-                            "chat_id": TELEGRAM_CHAT_ID,
-                            "text": caption[:4096],
-                            "parse_mode": "HTML"
-                        }
-                    )
+            r = requests.post(
+                f"{self.API}/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+                data={
+                    "chat_id": TELEGRAM_CHAT_ID,
+                    "text": caption[:4096],
+                    "parse_mode": "HTML"
+                }
+            )
             r.raise_for_status()
             log.info(f"✅ Telegram envoyé : {product.title[:40]}")
             return True
@@ -471,7 +450,6 @@ class ShopForYouAgent:
         self.updater  = ShopUpdater()
         self.telegram = TelegramNotifier()
         self.tiktok   = TikTokVideoGenerator()
-        self.image_gen = ImageGenerator()
 
     def run(self):
         log.info("=" * 60)
@@ -498,9 +476,7 @@ class ShopForYouAgent:
         for i, product in enumerate(products):
             hook = random.choice(HOOKS).replace("{price}", str(int(product.price)))
             log.info(f"Produit {i+1}/{len(products)} : {product.title[:40]}")
-            # Toujours générer une image IA
-            ai_image = self.image_gen.generate(product.title, product.category)
-            self.telegram.send_product(product, hook, ai_image)
+            self.telegram.send_product(product, hook)
             time.sleep(random.uniform(5, 10))
             self.tiktok.generate(product, hook)
             time.sleep(random.uniform(5, 10))
