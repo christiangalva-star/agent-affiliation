@@ -103,23 +103,15 @@ class AmazonScanner:
 
     def fetch(self, url: str) -> Optional[str]:
         try:
-            with sync_playwright() as p:
-                browser = p.chromium.launch(
-                    headless=True,
-                    args=["--no-sandbox", "--disable-setuid-sandbox"]
-                )
-                ctx = browser.new_context(
-                    locale="fr-FR",
-                    user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                               "AppleWebKit/537.36 (KHTML, like Gecko) "
-                               "Chrome/120.0.0.0 Safari/537.36"
-                )
-                page = ctx.new_page()
-                page.goto(url, timeout=30000, wait_until="domcontentloaded")
-                time.sleep(random.uniform(2, 4))
-                html = page.content()
-                browser.close()
-            return html
+            api_key = os.getenv("SCRAPER_API_KEY", "")
+            if not api_key:
+                log.warning("SCRAPER_API_KEY manquant")
+                return None
+            scraper_url = f"http://api.scraperapi.com?api_key={api_key}&url={requests.utils.quote(url)}&country_code=fr"
+            r = requests.get(scraper_url, timeout=60)
+            r.raise_for_status()
+            log.info(f"ScraperAPI OK — {len(r.text)} chars")
+            return r.text
         except Exception as e:
             log.warning(f"Fetch error {url}: {e}")
             return None
