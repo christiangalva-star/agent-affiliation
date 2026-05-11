@@ -107,7 +107,6 @@ class AmazonScanner:
             if not api_key:
                 log.warning("SCRAPER_API_KEY manquant")
                 return None
-            # Utiliser l'endpoint Amazon structuré de ScraperAPI
             import urllib.parse
             query = urllib.parse.parse_qs(urllib.parse.urlparse(url).query).get('k', [''])[0]
             scraper_url = f"https://api.scraperapi.com/structured/amazon/search"
@@ -145,7 +144,6 @@ class AmazonScanner:
                         continue
                     image_url = item.get("image", "")
                     affiliate_url = f"https://www.amazon.fr/dp/{asin}?tag={AMAZON_TAG}"
-                    import math
                     score = (rating * 20) + max(0, (1 - price / MAX_PRICE) * 10)
                     products.append(Product(
                         title=title, price=price, rating=rating, reviews=0,
@@ -163,7 +161,6 @@ class AmazonScanner:
     def scan(self) -> List[Product]:
         all_products = []
 
-        # Une niche par catégorie
         categories = {
             "mode":     [n for n in NICHES if n["category"] == "mode"],
             "maison":   [n for n in NICHES if n["category"] == "maison"],
@@ -189,7 +186,7 @@ class AmazonScanner:
                 cat_products.sort(key=lambda x: x.score, reverse=True)
                 best = cat_products[0]
                 best_per_category[cat] = best
-                log.info(f"✅ [{cat}] Meilleur : {best.title[:40]} ({best.price}€, {best.reviews} avis)")
+                log.info(f"✅ [{cat}] Meilleur : {best.title[:40]} ({best.price}€)")
             else:
                 log.warning(f"❌ [{cat}] Aucun produit trouvé")
 
@@ -197,150 +194,16 @@ class AmazonScanner:
         log.info(f"Total produits sélectionnés : {len(result)}/5")
         return result
 
-    def __init__(self):
-        self.headers = {
-            "Authorization": f"token {GITHUB_TOKEN}",
-            "Accept": "application/vnd.github.v3+json"
-        }
 
-    def get_file(self):
-        r = requests.get(f"{self.API}/repos/{GITHUB_REPO}/contents/index.html", headers=self.headers)
-        r.raise_for_status()
-        data = r.json()
-        content = base64.b64decode(data["content"]).decode("utf-8")
-        sha = data["sha"]
-        return content, sha
-
-    def build_card(self, p: Product) -> str:
-        stars = "★" * int(p.rating) + "☆" * (5 - int(p.rating))
-        cat_label = CAT_LABELS.get(p.category, p.category.capitalize())
-        title_short = p.title[:60] + "..." if len(p.title) > 60 else p.title
-        return f'''
-    <div class="card" data-cat="{p.category}">
-      <div class="card-img-wrap">
-        <div class="card-img">{p.emoji}</div>
-      </div>
-      <div class="card-body">
-        <span class="card-category">{cat_label}</span>
-        <p class="card-title">{title_short}</p>
-        <div class="card-meta">
-          <span class="stars">{stars}</span>
-          <span class="reviews">{p.rating} · {p.reviews} avis</span>
-        </div>
-        <div class="card-footer">
-          <div><div class="price">{p.price:.2f}€</div></div>
-          <a href="{p.affiliate_url}" class="btn-voir" target="_blank">Voir →</a>
-        </div>
-      </div>
-    </div>'''
-
-    def update(self, products: List[Product]) -> bool:
-        if not GITHUB_TOKEN:
-            log.warning("GITHUB_TOKEN manquant — boutique non mise à jour")
-            return False
-        try:
-            content, sha = self.get_file()
-            new_cards = "\n".join(self.build_card(p) for p in products)
-            marker_start = "<!-- PRODUITS_AUTO_START -->"
-            marker_end = "<!-- PRODUITS_AUTO_END -->"
-            if marker_start in content:
-                pattern = f"{marker_start}.*?{marker_end}"
-                replacement = f"{marker_start}\n{new_cards}\n    {marker_end}"
-                new_content = re.sub(pattern, replacement, content, flags=re.DOTALL)
-            else:
-                new_content = content.replace(
-                    '<div class="grid" id="grid">',
-                    f'<div class="grid" id="grid">\n    {marker_start}\n{new_cards}\n    {marker_end}'
-                )
-            encoded = base64.b64encode(new_content.encode("utf-8")).decode("utf-8")
-            payload = {
-                "message": f"[Auto] {len(products)} nouveaux produits — {datetime.now().strftime('%d/%m/%Y')}",
-                "content": encoded,
-                "sha": sha
-            }
-            r = requests.put(
-                f"{self.API}/repos/{GITHUB_REPO}/contents/index.html",
-                headers=self.headers,
-                json=payload
-            )
-            r.raise_for_status()
-            log.info(f"✅ Boutique mise à jour avec {len(products)} produits")
-            return True
-        except Exception as e:
-            log.error(f"Erreur mise à jour boutique : {e}")
-            return False
-
-# ── MODULE 3 : GÉNÉRATION IMAGE IA ────────────────────────────────────────────
-class ImageGenerator:
-    """Génère des images lifestyle via Replicate (Stable Diffusion)."""
-
-    REPLICATE_TOKEN = os.getenv("REPLICATE_API_TOKEN", "")
-
-    PROMPTS = {
-        "mode":     "elegant young woman wearing {product}, lifestyle photo, neutral background, professional fashion photography, soft lighting, high quality",
-        "maison":   "{product} in a modern bright living room, interior design photo, cozy atmosphere, professional photography",
-        "beaute":   "beautiful woman using {product}, spa atmosphere, soft lighting, beauty photography, professional",
-        "cuisine":  "{product} in a modern kitchen, food photography style, bright lighting, professional",
-        "bienetre": "person using {product}, zen atmosphere, wellness lifestyle photo, soft natural lighting",
-        "default":  "{product} product showcase, lifestyle photography, professional, high quality",
-    }
-
-    def generate(self, product_title: str, category: str) -> str | None:
-        if not self.REPLICATE_TOKEN:
-            log.warning("REPLICATE_API_TOKEN manquant")
-            return None
-        log.info(f"Génération image IA pour : {product_title[:40]}")
-        try:
-            prompt_template = self.PROMPTS.get(category, self.PROMPTS["default"])
-            product_short = product_title[:50]
-            prompt = prompt_template.replace("{product}", product_short)
-            prompt += ", 9:16 vertical format, instagram story style"
-
-            # Lancer la génération
-            r = requests.post(
-                "https://api.replicate.com/v1/predictions",
-                headers={
-                    "Authorization": f"Token {self.REPLICATE_TOKEN}",
-                    "Content-Type": "application/json"
-                },
-                json={
-                    "version": "black-forest-labs/flux-schnell",
-                    "input": {
-                        "prompt": prompt,
-                        "aspect_ratio": "9:16",
-                        "num_outputs": 1,
-                        "output_format": "jpg"
-                    }
-                }
-            )
-            r.raise_for_status()
-            prediction = r.json()
-            prediction_id = prediction["id"]
-
-            # Attendre le résultat (max 60s)
-            for _ in range(30):
-                time.sleep(3)
-                r2 = requests.get(
-                    f"https://api.replicate.com/v1/predictions/{prediction_id}",
-                    headers={"Authorization": f"Token {self.REPLICATE_TOKEN}"}
-                )
-                data = r2.json()
-                if data["status"] == "succeeded":
-                    image_url = data["output"][0]
-                    log.info(f"✅ Image IA générée : {image_url}")
-                    return image_url
-                elif data["status"] == "failed":
-                    log.error("Génération image IA échouée")
-                    return None
-
-        except Exception as e:
-            log.error(f"Erreur Replicate détaillée : {type(e).__name__} — {e}")
-            return None
-
-
-# ── MODULE 2 : MISE À JOUR BOUTIQUE ─────────────────────────────────────────────
+# ── MODULE 2 : MISE À JOUR BOUTIQUE ──────────────────────────────────────────
 class ShopUpdater:
-    """Met à jour index.html sur GitHub Pages via l'API GitHub."""
+    """Met à jour index.html sur GitHub Pages via l'API GitHub.
+    
+    - Zone AUTO  : entre <!-- PRODUITS_AUTO_START --> et <!-- PRODUITS_AUTO_END -->
+      → remplacée à chaque run
+    - Zone MANUELLE : entre <!-- PRODUITS_MANUELS_START --> et <!-- PRODUITS_MANUELS_END -->
+      → jamais touchée par l'agent
+    """
     API = "https://api.github.com"
 
     def __init__(self):
@@ -386,18 +249,30 @@ class ShopUpdater:
         try:
             content, sha = self.get_file()
             new_cards = "\n".join(self.build_card(p) for p in products)
+
+            # ── Zone AUTO uniquement ──────────────────────────────────────────
             marker_start = "<!-- PRODUITS_AUTO_START -->"
-            marker_end = "<!-- PRODUITS_AUTO_END -->"
+            marker_end   = "<!-- PRODUITS_AUTO_END -->"
+
             if marker_start in content:
-                import re
-                pattern = f"{marker_start}.*?{marker_end}"
+                pattern = f"{re.escape(marker_start)}.*?{re.escape(marker_end)}"
                 replacement = f"{marker_start}\n{new_cards}\n    {marker_end}"
                 new_content = re.sub(pattern, replacement, content, flags=re.DOTALL)
             else:
-                new_content = content.replace(
-                    '<div class="grid" id="grid">',
-                    f'<div class="grid" id="grid">\n    {marker_start}\n{new_cards}\n    {marker_end}'
-                )
+                # Pas de marqueur → on l'insère juste avant PRODUITS_MANUELS
+                # ou en tête de grille si pas de zone manuelle non plus
+                insert_before = "<!-- PRODUITS_MANUELS_START -->"
+                if insert_before in content:
+                    new_content = content.replace(
+                        insert_before,
+                        f"{marker_start}\n{new_cards}\n    {marker_end}\n    {insert_before}"
+                    )
+                else:
+                    new_content = content.replace(
+                        '<div class="grid" id="grid">',
+                        f'<div class="grid" id="grid">\n    {marker_start}\n{new_cards}\n    {marker_end}'
+                    )
+
             encoded = base64.b64encode(new_content.encode("utf-8")).decode("utf-8")
             payload = {
                 "message": f"[Auto] {len(products)} nouveaux produits — {datetime.now().strftime('%d/%m/%Y')}",
@@ -417,15 +292,54 @@ class ShopUpdater:
             return False
 
 
+# ── MODULE 3 : GÉNÉRATION IMAGE IA ────────────────────────────────────────────
+class ImageGenerator:
+    REPLICATE_TOKEN = os.getenv("REPLICATE_API_TOKEN", "")
+
+    PROMPTS = {
+        "mode":     "elegant young woman wearing {product}, lifestyle photo, neutral background, professional fashion photography, soft lighting, high quality",
+        "maison":   "{product} in a modern bright living room, interior design photo, cozy atmosphere, professional photography",
+        "beaute":   "beautiful woman using {product}, spa atmosphere, soft lighting, beauty photography, professional",
+        "cuisine":  "{product} in a modern kitchen, food photography style, bright lighting, professional",
+        "bienetre": "person using {product}, zen atmosphere, wellness lifestyle photo, soft natural lighting",
+        "default":  "{product} product showcase, lifestyle photography, professional, high quality",
+    }
+
+    def generate(self, product_title: str, category: str) -> str | None:
+        if not self.REPLICATE_TOKEN:
+            log.warning("REPLICATE_API_TOKEN manquant")
+            return None
+        log.info(f"Génération image IA pour : {product_title[:40]}")
+        try:
+            prompt_template = self.PROMPTS.get(category, self.PROMPTS["default"])
+            prompt = prompt_template.replace("{product}", product_title[:50])
+            prompt += ", 9:16 vertical format, instagram story style"
+            r = requests.post(
+                "https://api.replicate.com/v1/predictions",
+                headers={"Authorization": f"Token {self.REPLICATE_TOKEN}", "Content-Type": "application/json"},
+                json={"version": "black-forest-labs/flux-schnell", "input": {"prompt": prompt, "aspect_ratio": "9:16", "num_outputs": 1, "output_format": "jpg"}}
+            )
+            r.raise_for_status()
+            prediction_id = r.json()["id"]
+            for _ in range(30):
+                time.sleep(3)
+                r2 = requests.get(f"https://api.replicate.com/v1/predictions/{prediction_id}", headers={"Authorization": f"Token {self.REPLICATE_TOKEN}"})
+                data = r2.json()
+                if data["status"] == "succeeded":
+                    return data["output"][0]
+                elif data["status"] == "failed":
+                    return None
+        except Exception as e:
+            log.error(f"Erreur Replicate : {e}")
+            return None
+
+
 # ── MODULE 4 : NOTIFICATION TELEGRAM ─────────────────────────────────────────
 class TelegramNotifier:
-    """Envoie les posts sur Telegram pour publication manuelle."""
-
     API = "https://api.telegram.org"
 
     def send_product(self, product, hook: str) -> bool:
         if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-            log.warning("Telegram non configuré")
             return False
         try:
             caption = (
@@ -445,11 +359,7 @@ class TelegramNotifier:
             )
             r = requests.post(
                 f"{self.API}/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-                data={
-                    "chat_id": TELEGRAM_CHAT_ID,
-                    "text": caption[:4096],
-                    "parse_mode": "HTML"
-                }
+                data={"chat_id": TELEGRAM_CHAT_ID, "text": caption[:4096], "parse_mode": "HTML"}
             )
             r.raise_for_status()
             log.info(f"✅ Telegram envoyé : {product.title[:40]}")
@@ -478,16 +388,13 @@ class TelegramNotifier:
             log.error(f"Erreur résumé Telegram : {e}")
             return False
 
-# ── MODULE 4 : GÉNÉRATION VIDÉO TIKTOK ────────────────────────────────────────
-class TikTokVideoGenerator:
-    """Génère une vidéo MP4 avec moviepy."""
 
+# ── MODULE 5 : GÉNÉRATION VIDÉO TIKTOK ────────────────────────────────────────
+class TikTokVideoGenerator:
     def generate(self, product: Product, hook: str) -> Optional[str]:
         try:
             import urllib.request
-            from moviepy.editor import (
-                ColorClip, ImageClip, TextClip, CompositeVideoClip
-            )
+            from moviepy.editor import ColorClip, ImageClip, TextClip, CompositeVideoClip
             tmp_img = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
             if product.image_url:
                 urllib.request.urlretrieve(product.image_url, tmp_img.name)
@@ -507,9 +414,8 @@ class TikTokVideoGenerator:
             ]
             for text, size, color, y in texts:
                 try:
-                    tc = TextClip(text, fontsize=size, color=color,
-                                  font="DejaVu-Sans-Bold", method="caption",
-                                  size=(1000, None)).set_position(("center", y)).set_duration(duration)
+                    tc = TextClip(text, fontsize=size, color=color, font="DejaVu-Sans-Bold",
+                                  method="caption", size=(1000, None)).set_position(("center", y)).set_duration(duration)
                     clips.append(tc)
                 except Exception:
                     pass
@@ -520,6 +426,7 @@ class TikTokVideoGenerator:
         except Exception as e:
             log.error(f"Erreur génération vidéo : {e}")
             return None
+
 
 # ── ORCHESTRATEUR ───────────────────────────────────────────────────────────────
 class ShopForYouAgent:
@@ -536,21 +443,11 @@ class ShopForYouAgent:
 
         products = self.scanner.scan()
         if not products:
-            log.warning("Aucun produit trouvé — utilisation produit par défaut")
-            products = [Product(
-                title="STC Chaussettes Paillettes Pipelette Bleu",
-                price=5.70, rating=4.8, reviews=145,
-                asin="B0DS6K72MD",
-                affiliate_url="https://www.amazon.fr/dp/B0DS6K72MD?tag=shopforyou099-21",
-                image_url="https://m.media-amazon.com/images/I/71YnNpHKHNL._AC_SX466_.jpg", category="mode", emoji="🧦", score=95.0
-            )]
+            log.warning("Aucun produit trouvé — cycle annulé")
+            return
 
         log.info(f"Top produit : {products[0].title[:50]} ({products[0].price}€)")
-        # Ne mettre à jour la boutique que si de vrais produits sont trouvés
-        if products[0].asin != "B0DS6K72MD":
-            self.updater.update(products)
-        else:
-            log.info("Produit par défaut — boutique non modifiée")
+        self.updater.update(products)
 
         for i, product in enumerate(products):
             hook = random.choice(HOOKS).replace("{price}", str(int(product.price)))
@@ -565,8 +462,9 @@ class ShopForYouAgent:
 
     def start(self):
         log.info(f"🟢 Agent démarré — Publication à {PUBLISH_HOUR} chaque jour")
+        log.info(f"⏳ Prochain run prévu à {PUBLISH_HOUR}")
         schedule.every().day.at(PUBLISH_HOUR).do(self.run)
-        self.run()
+        # ── PAS de self.run() ici — on attend l'heure programmée ──
         while True:
             schedule.run_pending()
             time.sleep(60)
