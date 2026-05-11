@@ -346,6 +346,85 @@ class ImageGenerator:
             return None
 
 
+# ── MODULE 2 : MISE À JOUR BOUTIQUE ─────────────────────────────────────────────
+class ShopUpdater:
+    """Met à jour index.html sur GitHub Pages via l'API GitHub."""
+    API = "https://api.github.com"
+
+    def __init__(self):
+        self.headers = {
+            "Authorization": f"token {GITHUB_TOKEN}",
+            "Accept": "application/vnd.github.v3+json"
+        }
+
+    def get_file(self):
+        r = requests.get(f"{self.API}/repos/{GITHUB_REPO}/contents/index.html", headers=self.headers)
+        r.raise_for_status()
+        data = r.json()
+        content = base64.b64decode(data["content"]).decode("utf-8")
+        sha = data["sha"]
+        return content, sha
+
+    def build_card(self, p) -> str:
+        stars = "★" * int(p.rating) + "☆" * (5 - int(p.rating))
+        cat_label = CAT_LABELS.get(p.category, p.category.capitalize())
+        title_short = p.title[:60] + "..." if len(p.title) > 60 else p.title
+        return f'''    <div class="card" data-cat="{p.category}">
+      <div class="card-img-wrap">
+        <div class="card-img">{p.emoji}</div>
+      </div>
+      <div class="card-body">
+        <span class="card-category">{cat_label}</span>
+        <p class="card-title">{title_short}</p>
+        <div class="card-meta">
+          <span class="stars">{stars}</span>
+          <span class="reviews">{p.rating} · {p.reviews} avis</span>
+        </div>
+        <div class="card-footer">
+          <div><div class="price">{p.price:.2f}€</div></div>
+          <a href="{p.affiliate_url}" class="btn-voir" target="_blank">Voir →</a>
+        </div>
+      </div>
+    </div>'''
+
+    def update(self, products) -> bool:
+        if not GITHUB_TOKEN:
+            log.warning("GITHUB_TOKEN manquant — boutique non mise à jour")
+            return False
+        try:
+            content, sha = self.get_file()
+            new_cards = "\n".join(self.build_card(p) for p in products)
+            marker_start = "<!-- PRODUITS_AUTO_START -->"
+            marker_end = "<!-- PRODUITS_AUTO_END -->"
+            if marker_start in content:
+                import re
+                pattern = f"{marker_start}.*?{marker_end}"
+                replacement = f"{marker_start}\n{new_cards}\n    {marker_end}"
+                new_content = re.sub(pattern, replacement, content, flags=re.DOTALL)
+            else:
+                new_content = content.replace(
+                    '<div class="grid" id="grid">',
+                    f'<div class="grid" id="grid">\n    {marker_start}\n{new_cards}\n    {marker_end}'
+                )
+            encoded = base64.b64encode(new_content.encode("utf-8")).decode("utf-8")
+            payload = {
+                "message": f"[Auto] {len(products)} nouveaux produits — {datetime.now().strftime('%d/%m/%Y')}",
+                "content": encoded,
+                "sha": sha
+            }
+            r = requests.put(
+                f"{self.API}/repos/{GITHUB_REPO}/contents/index.html",
+                headers=self.headers,
+                json=payload
+            )
+            r.raise_for_status()
+            log.info(f"✅ Boutique mise à jour avec {len(products)} produits")
+            return True
+        except Exception as e:
+            log.error(f"Erreur mise à jour boutique : {e}")
+            return False
+
+
 # ── MODULE 4 : NOTIFICATION TELEGRAM ─────────────────────────────────────────
 class TelegramNotifier:
     """Envoie les posts sur Telegram pour publication manuelle."""
